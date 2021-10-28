@@ -41,6 +41,10 @@ struct output {
 	uint16_t *table;
 };
 
+static const struct zwlr_gamma_control_v1_listener gamma_control_listener = {
+	.gamma_size = gamma_control_handle_gamma_size,
+	.failed = gamma_control_handle_failed,
+};
 static struct zwlr_gamma_control_manager_v1 *gamma_control_manager = NULL;
 static int change_signal_fds[2];
 static volatile int temp;
@@ -85,21 +89,19 @@ static int planckian_locus(double *x, double *y) {
 
 static double srgb_gamma(double value) {
 	// https://en.wikipedia.org/wiki/SRGB
-	if (value <= 0.0031308) {
+	if (value <= 0.0031308)
 		return 12.92 * value;
-	} else {
+	else
 		return pow(1.055 * value, 1.0/2.2) - 0.055;
-	}
 }
 
 static double clamp(double value) {
-	if (value > 1.0) {
+	if (value > 1.0)
 		return 1.0;
-	} else if (value < 0.0) {
+	else if (value < 0.0)
 		return 0.0;
-	} else {
+	else
 		return value;
-	}
 }
 
 static void xyz_to_srgb(double x, double y, double z, double *r, double *g, double *b) {
@@ -123,11 +125,10 @@ void calc_whitepoint(double *rw, double *gw, double *bw) {
 	}
 
 	double x = 1.0, y = 1.0;
-	if (temp >= 6500) {
+	if (temp >= 6500)
 		illuminant_d(&x, &y);
-	} else {
+	else
 		planckian_locus(&x, &y);
-	}
 	double z = 1.0 - x - y;
 
 	xyz_to_srgb(x, y, z, rw, gw, bw);
@@ -138,9 +139,8 @@ void calc_whitepoint(double *rw, double *gw, double *bw) {
 static int create_anonymous_file(off_t size) {
 	char template[] = "/tmp/redway-shared-XXXXXX";
 	int fd = mkstemp(template);
-	if (fd < 0) {
+	if (fd < 0)
 		return -1;
-	}
 
 	int ret;
 	do {
@@ -181,14 +181,16 @@ static void gamma_control_handle_gamma_size(void *data,
 	(void)gamma_control;
 	struct output *output = data;
 	output->ramp_size = ramp_size;
-	if (output->table_fd != -1) {
+	if (output->table_fd != -1)
 		close(output->table_fd);
-	}
 	output->table_fd = create_gamma_table(ramp_size, &output->table);
 	output->context->new_output = true;
 	if (output->table_fd < 0) {
-		fprintf(stderr, "could not create gamma table for output %d\n",
-				output->id);
+		fprintf(
+			stderr,
+			"could not create gamma table for output %d\n",
+			output->id
+		);
 		exit(EXIT_FAILURE);
 	}
 }
@@ -197,8 +199,11 @@ static void gamma_control_handle_failed(void *data,
 		struct zwlr_gamma_control_v1 *gamma_control) {
 	(void)gamma_control;
 	struct output *output = data;
-	fprintf(stderr, "gamma control of output %d failed\n",
-			output->id);
+	fprintf(
+		stderr,
+		"gamma control of output %d failed\n",
+		output->id
+	);
 	zwlr_gamma_control_v1_destroy(output->gamma_control);
 	output->gamma_control = NULL;
 	if (output->table_fd != -1) {
@@ -207,24 +212,27 @@ static void gamma_control_handle_failed(void *data,
 	}
 }
 
-static const struct zwlr_gamma_control_v1_listener gamma_control_listener = {
-	.gamma_size = gamma_control_handle_gamma_size,
-	.failed = gamma_control_handle_failed,
-};
-
 static void setup_output(struct output *output) {
-	if (output->gamma_control != NULL) {
+	if (output->gamma_control != NULL)
 		return;
-	}
 	if (gamma_control_manager == NULL) {
-		fprintf(stderr, "skipping setup of output %d: gamma_control_manager missing\n",
-				output->id);
+		fprintf(
+			stderr,
+			"skipping setup of output %d: "
+			"gamma_control_manager missing\n",
+			output->id
+		);
 		return;
 	}
 	output->gamma_control = zwlr_gamma_control_manager_v1_get_gamma_control(
-		gamma_control_manager, output->wl_output);
-	zwlr_gamma_control_v1_add_listener(output->gamma_control,
-		&gamma_control_listener, output);
+		gamma_control_manager,
+		output->wl_output
+	);
+	zwlr_gamma_control_v1_add_listener(
+		output->gamma_control,
+		&gamma_control_listener,
+		output
+	);
 }
 
 static void registry_handle_global(void *data, struct wl_registry *registry,
@@ -235,16 +243,28 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
 		fprintf(stderr, "registry: adding output %d\n", name);
 		struct output *output = calloc(1, sizeof(struct output));
 		output->id = name;
-		output->wl_output = wl_registry_bind(registry, name,
-				&wl_output_interface, 1);
+		output->wl_output = wl_registry_bind(
+			registry,
+			name,
+			&wl_output_interface,
+			1
+		);
 		output->table_fd = -1;
 		output->context = ctx;
 		wl_list_insert(&ctx->outputs, &output->link);
 		setup_output(output);
-	} else if (strcmp(interface,
-				zwlr_gamma_control_manager_v1_interface.name) == 0) {
-		gamma_control_manager = wl_registry_bind(registry, name,
-				&zwlr_gamma_control_manager_v1_interface, 1);
+	} else if (
+		strcmp(
+			interface,
+			zwlr_gamma_control_manager_v1_interface.name
+		) == 0
+	) {
+		gamma_control_manager = wl_registry_bind(
+			registry,
+			name,
+			&zwlr_gamma_control_manager_v1_interface,
+			1
+		);
 	}
 }
 
@@ -255,14 +275,16 @@ static void registry_handle_global_remove(void *data,
 	struct output *output, *tmp;
 	wl_list_for_each_safe(output, tmp, &ctx->outputs, link) {
 		if (output->id == name) {
-			fprintf(stderr, "registry: removing output %d\n", name);
+			fprintf(
+				stderr,
+				"registry: removing output %d\n",
+				name
+			);
 			wl_list_remove(&output->link);
-			if (output->gamma_control != NULL) {
+			if (output->gamma_control != NULL)
 				zwlr_gamma_control_v1_destroy(output->gamma_control);
-			}
-			if (output->table_fd != -1) {
+			if (output->table_fd != -1)
 				close(output->table_fd);
-			}
 			free(output);
 			break;
 		}
@@ -294,21 +316,28 @@ static void set_temperature(struct wl_list *outputs) {
 
 	struct output *output;
 	wl_list_for_each(output, outputs, link) {
-		if (output->gamma_control == NULL || output->table_fd == -1) {
+		if (
+			output->gamma_control == NULL ||
+			output->table_fd == -1
+		) {
 			continue;
 		}
-		fill_gamma_table(output->table, output->ramp_size,
-				rw, gw, bw);
+		fill_gamma_table(
+			output->table,
+			output->ramp_size,
+			rw, gw, bw
+		);
 		lseek(output->table_fd, 0, SEEK_SET);
-		zwlr_gamma_control_v1_set_gamma(output->gamma_control,
-				output->table_fd);
+		zwlr_gamma_control_v1_set_gamma(
+			output->gamma_control,
+			output->table_fd
+		);
 	}
 }
 
 static int display_dispatch(struct wl_display *display, int timeout) {
-	if (wl_display_prepare_read(display) == -1) {
+	if (wl_display_prepare_read(display) == -1)
 		return wl_display_dispatch_pending(display);
-	}
 
 	struct pollfd pfd[2];
 	pfd[0].fd = wl_display_get_fd(display);
@@ -342,8 +371,14 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 	if (pfd[1].revents & POLLIN) {
 		// Empty signal fd
 		char garbage[8];
-		if (read(change_signal_fds[0], &garbage, sizeof garbage) == -1
-				&& errno != EAGAIN) {
+		if (
+			read(
+				change_signal_fds[0],
+				&garbage,
+				sizeof garbage
+			) == -1 &&
+			errno != EAGAIN
+		) {
 			return -1;
 		}
 		switch (garbage[0]) {
@@ -363,9 +398,8 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 		return 0;
 	}
 
-	if (wl_display_read_events(display) == -1) {
+	if (wl_display_read_events(display) == -1)
 		return -1;
-	}
 
 	return wl_display_dispatch_pending(display);
 }
@@ -386,7 +420,11 @@ static int wlrun(void) {
 	wl_display_roundtrip(display);
 
 	if (gamma_control_manager == NULL) {
-		fprintf(stderr, "compositor doesn't support wlr-gamma-control-unstable-v1\n");
+		fprintf(
+			stderr,
+			"compositor doesn't support "
+			"wlr-gamma-control-unstable-v1\n"
+		);
 		return EXIT_FAILURE;
 	}
 
@@ -399,11 +437,10 @@ static int wlrun(void) {
 	set_temperature(&ctx.outputs);
 
 	while (display_dispatch(display, -1) != -1) {
-		if (temp < MINIMUM_TEMP) {
+		if (temp < MINIMUM_TEMP)
 			temp = MINIMUM_TEMP;
-		} else if (temp > MAXIMUM_TEMP) {
+		else if (temp > MAXIMUM_TEMP)
 			temp = MAXIMUM_TEMP;
-		}
 		if (temp != set_temp) {
 			set_temperature(&ctx.outputs);
 			set_temp = temp;
@@ -413,7 +450,6 @@ static int wlrun(void) {
 	return EXIT_SUCCESS;
 }
 
-
 void temp_increase(int ignored) {
 	if (ignored) {}
 	write(change_signal_fds[1], "+\0", 2);
@@ -422,7 +458,6 @@ void temp_decrease(int ignored) {
 	if (ignored) {}
 	write(change_signal_fds[1], "-\0", 2);
 }
-
 
 static const char usage[] = "usage: %s <temperature>\n";
 
