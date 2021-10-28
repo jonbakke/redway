@@ -40,7 +40,7 @@ struct output {
 static struct zwlr_gamma_control_manager_v1 *gamma_control_manager = NULL;
 static int change_signal_fds[2];
 static volatile int temp;
-static double gamma;
+static double gamma_mod;
 
 /*
  * Illuminant D, or daylight locus, is is a "standard illuminant" used to
@@ -79,12 +79,12 @@ static int planckian_locus(double *x, double *y) {
 	return 0;
 }
 
-static double srgb_gamma(double value, double gamma) {
+static double srgb_gamma(double value) {
 	// https://en.wikipedia.org/wiki/SRGB
 	if (value <= 0.0031308) {
 		return 12.92 * value;
 	} else {
-		return pow(1.055 * value, 1.0/gamma) - 0.055;
+		return pow(1.055 * value, 1.0/2.2) - 0.055;
 	}
 }
 
@@ -100,9 +100,9 @@ static double clamp(double value) {
 
 static void xyz_to_srgb(double x, double y, double z, double *r, double *g, double *b) {
 	// http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
-	*r = srgb_gamma(clamp(3.2404542 * x - 1.5371385 * y - 0.4985314 * z), 2.2);
-	*g = srgb_gamma(clamp(-0.9692660 * x + 1.8760108 * y + 0.0415560 * z), 2.2);
-	*b = srgb_gamma(clamp(0.0556434 * x - 0.2040259 * y + 1.0572252 * z), 2.2);
+	*r = srgb_gamma(clamp(3.2404542 * x - 1.5371385 * y - 0.4985314 * z));
+	*g = srgb_gamma(clamp(-0.9692660 * x + 1.8760108 * y + 0.0415560 * z));
+	*b = srgb_gamma(clamp(0.0556434 * x - 0.2040259 * y + 1.0572252 * z));
 }
 
 static void srgb_normalize(double *r, double *g, double *b) {
@@ -271,15 +271,15 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 static void fill_gamma_table(uint16_t *table, uint32_t ramp_size, double rw,
-		double gw, double bw, double gamma) {
+		double gw, double bw) {
 	uint16_t *r = table;
 	uint16_t *g = table + ramp_size;
 	uint16_t *b = table + 2 * ramp_size;
 	for (uint32_t i = 0; i < ramp_size; ++i) {
 		double val = (double)i / (ramp_size - 1);
-		r[i] = (uint16_t)(UINT16_MAX * pow(val * rw, 1.0 / gamma));
-		g[i] = (uint16_t)(UINT16_MAX * pow(val * gw, 1.0 / gamma));
-		b[i] = (uint16_t)(UINT16_MAX * pow(val * bw, 1.0 / gamma));
+		r[i] = (uint16_t)(UINT16_MAX * pow(val * rw, 1.0 / gamma_mod));
+		g[i] = (uint16_t)(UINT16_MAX * pow(val * gw, 1.0 / gamma_mod));
+		b[i] = (uint16_t)(UINT16_MAX * pow(val * bw, 1.0 / gamma_mod));
 	}
 }
 
@@ -294,7 +294,7 @@ static void set_temperature(struct wl_list *outputs) {
 			continue;
 		}
 		fill_gamma_table(output->table, output->ramp_size,
-				rw, gw, bw, gamma);
+				rw, gw, bw);
 		lseek(output->table_fd, 0, SEEK_SET);
 		zwlr_gamma_control_v1_set_gamma(output->gamma_control,
 				output->table_fd);
@@ -425,7 +425,7 @@ int main(int argc, char *argv[]) {
 	else
 		temp = DEFAULT_TEMP;
 
-	gamma = 1.0;
+	gamma_mod = 1.0;
 
 	if (pipe(change_signal_fds) == -1) {
 		fprintf(stderr, "Could not create a pipe.\n");
