@@ -15,7 +15,7 @@
 
 void temp_increase(int ignored);
 void temp_decrease(int ignored);
-void calc_whitepoint(int temp, double *rw, double *gw, double *bw);
+void calc_whitepoint(double *rw, double *gw, double *bw);
 
 struct context {
 	bool new_output;
@@ -48,7 +48,7 @@ static double gamma;
  * This approximation is strictly speaking only well-defined between 4000K and
  * 25000K, but we stretch it a bit further down for transition purposes.
  */
-static int illuminant_d(int temp, double *x, double *y) {
+static int illuminant_d(double *x, double *y) {
 	// https://en.wikipedia.org/wiki/Standard_illuminant#Illuminant_series_D
 	if (temp >= 2500 && temp <= 7000) {
 		*x = 0.244063 +
@@ -75,7 +75,7 @@ static int illuminant_d(int temp, double *x, double *y) {
  *
  * This approximation is only valid from 1667K to 25000K.
  */
-static int planckian_locus(int temp, double *x, double *y) {
+static int planckian_locus(double *x, double *y) {
 	// https://en.wikipedia.org/wiki/Planckian_locus#Approximation
 	if (temp >= 1667 && temp <= 4000) {
 		*x = -0.2661239e9 / pow(temp, 3) -
@@ -142,7 +142,7 @@ static void srgb_normalize(double *r, double *g, double *b) {
 	*b /= maxw;
 }
 
-void calc_whitepoint(int temp, double *rw, double *gw, double *bw) {
+void calc_whitepoint(double *rw, double *gw, double *bw) {
 	if (temp == 6500) {
 		*rw = *gw = *bw = 1.0;
 		return;
@@ -150,22 +150,20 @@ void calc_whitepoint(int temp, double *rw, double *gw, double *bw) {
 
 	double x = 1.0, y = 1.0;
 	if (temp >= 25000) {
-		illuminant_d(25000, &x, &y);
+		illuminant_d(&x, &y);
 	} else if (temp >= 4000) {
-		illuminant_d(temp, &x, &y);
+		illuminant_d(&x, &y);
 	} else if (temp >= 2500) {
 		double x1, y1, x2, y2;
-		illuminant_d(temp, &x1, &y1);
-		planckian_locus(temp, &x2, &y2);
+		illuminant_d(&x1, &y1);
+		planckian_locus(&x2, &y2);
 
 		double factor = (4000 - temp) / 1500;
 		double sinefactor = (cos(M_PI*factor) + 1.0) / 2.0;
 		x = x1 * sinefactor + x2 * (1.0 - sinefactor);
 		y = y1 * sinefactor + y2 * (1.0 - sinefactor);
-	} else if (temp >= 1667) {
-		planckian_locus(temp, &x, &y);
 	} else {
-		planckian_locus(1667, &x, &y);
+		planckian_locus(&x, &y);
 	}
 	double z = 1.0 - x - y;
 
@@ -326,9 +324,9 @@ static void fill_gamma_table(uint16_t *table, uint32_t ramp_size, double rw,
 	}
 }
 
-static void set_temperature(struct wl_list *outputs, int temp, double gamma) {
+static void set_temperature(struct wl_list *outputs) {
 	double rw, gw, bw;
-	calc_whitepoint(temp, &rw, &gw, &bw);
+	calc_whitepoint(&rw, &gw, &bw);
 	fprintf(stderr, "setting temperature to %d K\n", temp);
 
 	struct output *output;
@@ -425,12 +423,12 @@ static int wlrun(void) {
 	}
 	wl_display_roundtrip(display);
 
-	set_temperature(&ctx.outputs, temp, gamma);
+	set_temperature(&ctx.outputs);
 
 	while (display_dispatch(display, -1) != -1) {
 		if (temp != set_temp) {
 			fprintf(stderr, "%d\n", temp);
-			set_temperature(&ctx.outputs, temp, gamma);
+			set_temperature(&ctx.outputs);
 			set_temp = temp;
 		}
 	}
@@ -464,7 +462,7 @@ int main(int argc, char *argv[]) {
 #ifdef DEFAULT_TEMP
 		temp = DEFAULT_TEMP;
 #else
-		temp = 5600;
+		temp = 6500;
 #endif
 
 	gamma = 1.0;
