@@ -48,24 +48,14 @@ static double gamma;
  * by most monitors and assumed here, is defined.
  *
  * This approximation is strictly speaking only well-defined between 4000K and
- * 25000K, but we stretch it a bit further down for transition purposes.
+ * 25000K.
  */
 static int illuminant_d(double *x, double *y) {
 	// https://en.wikipedia.org/wiki/Standard_illuminant#Illuminant_series_D
-	if (temp >= 2500 && temp <= 7000) {
-		*x = 0.244063 +
-			0.09911e3 / temp +
-			2.9678e6 / pow(temp, 2) -
-			4.6070e9 / pow(temp, 3);
-	} else if (temp > 7000) {
-		*x = 0.237040 +
-			0.24748e3 / temp +
-			1.9018e6 / pow(temp, 2) -
-			2.0064e9 / pow(temp, 3);
-	} else {
-		errno = EINVAL;
-		return -1;
-	}
+	*x = 0.237040 +
+		0.24748e3 / temp +
+		1.9018e6 / pow(temp, 2) -
+		2.0064e9 / pow(temp, 3);
 	*y = (-3 * pow(*x, 2)) + (2.870 * (*x)) - 0.275;
 	return 0;
 }
@@ -74,40 +64,18 @@ static int illuminant_d(double *x, double *y) {
  * Planckian locus, or black body locus, describes the color of a black body at
  * a certain temperatures. This is not entirely equivalent to daylight due to
  * atmospheric effects.
- *
- * This approximation is only valid from 1667K to 25000K.
  */
 static int planckian_locus(double *x, double *y) {
 	// https://en.wikipedia.org/wiki/Planckian_locus#Approximation
-	if (temp <= 4000) {
-		*x = -0.2661239e9 / pow(temp, 3) -
-			0.2343589e6 / pow(temp, 2) +
-			0.8776956e3 / temp +
-			0.179910;
-		if (temp <= 2222) {
-			*y = -1.1064814 * pow(*x, 3) -
-				1.34811020 * pow(*x, 2) +
-				2.18555832 * (*x) -
-				0.20219683;
-		} else {
-			*y = -0.9549476 * pow(*x, 3) -
-				1.37418593 * pow(*x, 2) +
-				2.09137015 * (*x) -
-				0.16748867;
-		}
-	} else if (temp > 4000) {
-		*x = -3.0258469e9 / pow(temp, 3) +
-			2.1070379e6 / pow(temp, 2) +
-			0.2226347e3 / temp +
-			0.240390;
-		*y = 3.0817580 * pow(*x, 3) -
-			5.87338670 * pow(*x, 2) +
-			3.75112997 * (*x) -
-			0.37001483;
-	} else {
-		errno = EINVAL;
-		return -1;
-	}
+	// Customized to taste from values appropriate for < 4,000K.
+	*x = -0.2661239e9 / pow(temp, 3) -
+		0.2343589e6 / pow(temp, 2) +
+		0.93e3 / temp + // originally 0.8776956e3
+		0.179910;
+	*y = -0.9549476 * pow(*x, 3) -
+		1.37418593 * pow(*x, 2) +
+		2.095 * (*x) -// originally 2.09137015
+		0.16748867;
 	return 0;
 }
 
@@ -151,17 +119,8 @@ void calc_whitepoint(double *rw, double *gw, double *bw) {
 	}
 
 	double x = 1.0, y = 1.0;
-	if (temp >= 4000) {
+	if (temp >= 6500) {
 		illuminant_d(&x, &y);
-	} else if (temp >= 2500) {
-		double x1, y1, x2, y2;
-		illuminant_d(&x1, &y1);
-		planckian_locus(&x2, &y2);
-
-		double factor = (4000 - temp) / 1500;
-		double sinefactor = (cos(M_PI*factor) + 1.0) / 2.0;
-		x = x1 * sinefactor + x2 * (1.0 - sinefactor);
-		y = y1 * sinefactor + y2 * (1.0 - sinefactor);
 	} else {
 		planckian_locus(&x, &y);
 	}
