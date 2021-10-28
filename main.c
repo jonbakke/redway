@@ -391,7 +391,6 @@ static int wlrun(void) {
 			temp = MAXIMUM_TEMP;
 		}
 		if (temp != set_temp) {
-			fprintf(stderr, "%d\n", temp);
 			set_temperature(&ctx.outputs);
 			set_temp = temp;
 		}
