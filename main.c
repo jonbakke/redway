@@ -55,7 +55,7 @@ static int illuminant_d(double *x, double *y) {
 			0.09911e3 / temp +
 			2.9678e6 / pow(temp, 2) -
 			4.6070e9 / pow(temp, 3);
-	} else if (temp > 7000 && temp <= 25000) {
+	} else if (temp > 7000) {
 		*x = 0.237040 +
 			0.24748e3 / temp +
 			1.9018e6 / pow(temp, 2) -
@@ -77,7 +77,7 @@ static int illuminant_d(double *x, double *y) {
  */
 static int planckian_locus(double *x, double *y) {
 	// https://en.wikipedia.org/wiki/Planckian_locus#Approximation
-	if (temp >= 1667 && temp <= 4000) {
+	if (temp <= 4000) {
 		*x = -0.2661239e9 / pow(temp, 3) -
 			0.2343589e6 / pow(temp, 2) +
 			0.8776956e3 / temp +
@@ -93,7 +93,7 @@ static int planckian_locus(double *x, double *y) {
 				2.09137015 * (*x) -
 				0.16748867;
 		}
-	} else if (temp > 4000 && temp < 25000) {
+	} else if (temp > 4000) {
 		*x = -3.0258469e9 / pow(temp, 3) +
 			2.1070379e6 / pow(temp, 2) +
 			0.2226347e3 / temp +
@@ -149,9 +149,7 @@ void calc_whitepoint(double *rw, double *gw, double *bw) {
 	}
 
 	double x = 1.0, y = 1.0;
-	if (temp >= 25000) {
-		illuminant_d(&x, &y);
-	} else if (temp >= 4000) {
+	if (temp >= 4000) {
 		illuminant_d(&x, &y);
 	} else if (temp >= 2500) {
 		double x1, y1, x2, y2;
@@ -426,6 +424,11 @@ static int wlrun(void) {
 	set_temperature(&ctx.outputs);
 
 	while (display_dispatch(display, -1) != -1) {
+		if (temp < 1200) {
+			temp = 1200;
+		} else if (temp > 20000) {
+			temp = 20000;
+		}
 		if (temp != set_temp) {
 			fprintf(stderr, "%d\n", temp);
 			set_temperature(&ctx.outputs);
