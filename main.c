@@ -11,7 +11,9 @@
 
 #include "wlr-gamma-control-unstable-v1-client-protocol.h"
 
-#define DEFAULT_TEMP 5600
+#define DEFAULT_TEMP  5600
+#define MINIMUM_TEMP  1200
+#define MAXIMUM_TEMP 20000
 
 void temp_increase(int ignored);
 void temp_decrease(int ignored);
@@ -424,10 +426,10 @@ static int wlrun(void) {
 	set_temperature(&ctx.outputs);
 
 	while (display_dispatch(display, -1) != -1) {
-		if (temp < 1200) {
-			temp = 1200;
-		} else if (temp > 20000) {
-			temp = 20000;
+		if (temp < MINIMUM_TEMP) {
+			temp = MINIMUM_TEMP;
+		} else if (temp > MAXIMUM_TEMP) {
+			temp = MAXIMUM_TEMP;
 		}
 		if (temp != set_temp) {
 			fprintf(stderr, "%d\n", temp);
@@ -462,11 +464,7 @@ int main(int argc, char *argv[]) {
 	if (2 == argc)
 		temp = strtol(argv[1], NULL, 0);
 	else
-#ifdef DEFAULT_TEMP
 		temp = DEFAULT_TEMP;
-#else
-		temp = 6500;
-#endif
 
 	gamma = 1.0;
 
