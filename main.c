@@ -15,6 +15,10 @@
 #define MINIMUM_TEMP  1200
 #define MAXIMUM_TEMP 20000
 
+/* On SIGUSR1, the current temperature is multiplied by this value;
+ * on SIGUSR2, the current temperature is divided by this value. */
+#define STEP_MULTIPLIER 1.06
+
 void temp_increase(int ignored);
 void temp_decrease(int ignored);
 void calc_whitepoint(double *rw, double *gw, double *bw);
@@ -342,6 +346,16 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 				&& errno != EAGAIN) {
 			return -1;
 		}
+		switch (garbage[0]) {
+		case '+':
+			temp = (int)( (double)temp * STEP_MULTIPLIER);
+			break;
+		case '-':
+			temp = (int)( (double)temp / STEP_MULTIPLIER);
+			break;
+		default:
+			break;
+		}
 	}
 
 	if ((pfd[0].revents & POLLIN) == 0) {
@@ -402,13 +416,11 @@ static int wlrun(void) {
 
 void temp_increase(int ignored) {
 	if (ignored) {}
-	temp = (int)( (double)temp * 1.10);
-	write(change_signal_fds[1], "\0", 1);
+	write(change_signal_fds[1], "+\0", 2);
 }
 void temp_decrease(int ignored) {
 	if (ignored) {}
-	temp = (int)( (double)temp * 0.90);
-	write(change_signal_fds[1], "\0", 1);
+	write(change_signal_fds[1], "-\0", 2);
 }
 
 
