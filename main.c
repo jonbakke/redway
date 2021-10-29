@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libgen.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -169,6 +170,7 @@ char* get_fifo_name(void) {
 }
 
 void parse_input(char *input) {
+	int offset = 0;
 	switch (input[0]) {
 	case '+':
 		temp = (int)( (double)temp * STEP_MULTIPLIER);
@@ -179,6 +181,13 @@ void parse_input(char *input) {
 	case '0': case '1': case '2': case '3': case '4': /* fall through */
 	case '5': case '6': case '7': case '8': case '9': /* fall through */
 		temp = atoi(input);
+		return;
+	case 't': case 'T': /* fall through */
+		while (*(input + offset) < '0' || *(input + offset) > '9')
+			offset++;
+		printf("input: %d (%d)\n", atoi(input + offset), offset);
+		printf("%s\n", input);
+		temp = atoi(input + offset);
 		return;
 	default:
 		return;
@@ -507,7 +516,7 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 
 	if (pfd[1].revents & POLLIN) {
 		// Empty signal fd
-		char input[8];
+		char input[PIPE_BUF];
 		if (
 			read(
 				change_signal_fds[0],
