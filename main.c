@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <libgen.h>
 #include <poll.h>
 #include <signal.h>
@@ -7,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include "wlr-gamma-control-unstable-v1-client-protocol.h"
@@ -105,7 +108,7 @@ static const char usage[] = "usage: %s <temperature>\n";
 /* Get filename for server FIFO;
  * first of XDG_RUNTIME_DIR, XDG_STATE_HOME, or HOME/.local/state,
  * in subdirectory redway, with FIFO named io;
- * FIFO io is not created, tested, or in any way assured. */
+ * the FIFO is created if it does not exist */
 char* get_fifo_name(void) {
 	static char name[FILENAME_MAX + 1] = { 0 };
 	if (name[0])
@@ -132,6 +135,34 @@ char* get_fifo_name(void) {
 	len = strlen(dir_name);
 	strncpy(&name[0], dir_name, len + 1);
 	strncpy(&name[0] + len, sub_name, strlen(sub_name) + 1);
+
+	/* ensure directory exists */
+	char tree[FILENAME_MAX + 1] = { 0 };
+	char *last_slash = NULL;
+	strncpy(tree, name, strlen(name));
+	last_slash = strrchr(tree, '/');
+	/* remove /io */
+	*last_slash = 0;
+	struct stat fifo_stat;
+	/* get parent directory that exists */
+	int count = 0;
+	while (stat(tree, &fifo_stat) == -1) {
+		last_slash = strrchr(tree, '/');
+		*last_slash = 0;
+		count++;
+	}
+	/* build directory path */
+	for (int i = 0; i < count; ++i) {
+		*last_slash = '/';
+		mkdir(tree, S_IRUSR | S_IWUSR | S_IXUSR);
+		// TODO error handling
+		last_slash = strchr(tree, 0);
+	}
+
+	/* create the FIFO */
+	umask(0);
+	mkfifo(name, S_IRUSR | S_IWUSR | S_IWGRP | S_IRGRP);
+	// TODO error handling
 
 	return &name[0];
 }
@@ -548,8 +579,7 @@ void temp_decrease(int ignored) {
 }
 
 int main(int argc, char *argv[]) {
-	get_fifo_name();
-	return 0;
+	/* validate input */
 	if (2 <= argc && ('0' > argv[1][0] || '9' < argv[1][0])) {
 		fprintf(stderr, usage, basename(argv[0]));
 		return 0;
@@ -559,13 +589,15 @@ int main(int argc, char *argv[]) {
 	else
 		temp = DEFAULT_TEMP;
 
+	/* set gamma_mod */
 	gamma_mod = 1.0;
 
-	if (pipe(change_signal_fds) == -1) {
-		fprintf(stderr, "Could not create a pipe.\n");
-		return -1;
-	}
+	/* make/open FIFO */
+	const char *fifo_name = get_fifo_name();
 
+	/* signal handlers */
+	change_signal_fds[0] = open(fifo_name, O_RDONLY | O_NONBLOCK);
+	change_signal_fds[1] = open(fifo_name, O_WRONLY | O_NONBLOCK);
 	struct sigaction increase = { .sa_handler = temp_increase };
 	sigaction(SIGUSR1, &increase, NULL);
 	struct sigaction decrease = { .sa_handler = temp_decrease };
