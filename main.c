@@ -29,6 +29,7 @@ static const struct zwlr_gamma_control_v1_listener gamma_control_listener;
 static const struct wl_registry_listener registry_listener;
 static struct zwlr_gamma_control_manager_v1 *gamma_control_manager;
 static int change_signal_fds[2];
+static bool wants_update;
 static volatile int temp;
 static double gamma_mod;
 
@@ -171,27 +172,40 @@ char* get_fifo_name(void) {
 
 void parse_input(char *input) {
 	int offset = 0;
+	const int orig_temp = temp;
+	const double orig_gamma = gamma_mod;
 	switch (input[0]) {
 	case '+':
 		temp = (int)( (double)temp * STEP_MULTIPLIER);
-		return;
+		break;
 	case '-':
 		temp = (int)( (double)temp / STEP_MULTIPLIER);
-		return;
+		break;
 	case '0': case '1': case '2': case '3': case '4': /* fall through */
 	case '5': case '6': case '7': case '8': case '9': /* fall through */
 		temp = atoi(input);
-		return;
+		break;
+	case 'g': case 'G': /* fall through */
+		while (*(input + offset) < '0' || *(input + offset) > '9')
+			offset++;
+		gamma_mod = atof(input + offset);
+		break;
 	case 't': case 'T': /* fall through */
 		while (*(input + offset) < '0' || *(input + offset) > '9')
 			offset++;
-		printf("input: %d (%d)\n", atoi(input + offset), offset);
-		printf("%s\n", input);
 		temp = atoi(input + offset);
-		return;
+		break;
 	default:
-		return;
+		break;
 	}
+
+	if (temp < MINIMUM_TEMP)
+		temp = MINIMUM_TEMP;
+	else if (temp > MAXIMUM_TEMP)
+		temp = MAXIMUM_TEMP;
+
+	if (orig_temp != temp || orig_gamma != gamma_mod)
+		wants_update = true;
 }
 
 /*
@@ -542,7 +556,6 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 }
 
 static int wlrun(void) {
-	int set_temp = 0;
 	struct context ctx;
 	wl_list_init(&ctx.outputs);
 
@@ -574,13 +587,9 @@ static int wlrun(void) {
 	set_temperature(&ctx.outputs);
 
 	while (display_dispatch(display, -1) != -1) {
-		if (temp < MINIMUM_TEMP)
-			temp = MINIMUM_TEMP;
-		else if (temp > MAXIMUM_TEMP)
-			temp = MAXIMUM_TEMP;
-		if (temp != set_temp) {
+		if (wants_update) {
 			set_temperature(&ctx.outputs);
-			set_temp = temp;
+			wants_update = false;
 		}
 	}
 
@@ -607,7 +616,8 @@ int main(int argc, char *argv[]) {
 	else
 		temp = DEFAULT_TEMP;
 
-	/* set gamma_mod */
+	/* initializers */
+	wants_update = true;
 	gamma_mod = 1.0;
 
 	/* make/open FIFO */
