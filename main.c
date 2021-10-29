@@ -32,6 +32,7 @@ static volatile int temp;
 static double gamma_mod;
 
 char* get_fifo_name(void);
+void parse_input(char *input);
 static int illuminant_d(double *x, double *y);
 static int planckian_locus(double *x, double *y);
 static double srgb_gamma(double value);
@@ -165,6 +166,23 @@ char* get_fifo_name(void) {
 	// TODO error handling
 
 	return &name[0];
+}
+
+void parse_input(char *input) {
+	switch (input[0]) {
+	case '+':
+		temp = (int)( (double)temp * STEP_MULTIPLIER);
+		return;
+	case '-':
+		temp = (int)( (double)temp / STEP_MULTIPLIER);
+		return;
+	case '0': case '1': case '2': case '3': case '4': /* fall through */
+	case '5': case '6': case '7': case '8': case '9': /* fall through */
+		temp = atoi(input);
+		return;
+	default:
+		return;
+	}
 }
 
 /*
@@ -489,27 +507,18 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 
 	if (pfd[1].revents & POLLIN) {
 		// Empty signal fd
-		char garbage[8];
+		char input[8];
 		if (
 			read(
 				change_signal_fds[0],
-				&garbage,
-				sizeof garbage
+				&input,
+				sizeof input
 			) == -1 &&
 			errno != EAGAIN
 		) {
 			return -1;
 		}
-		switch (garbage[0]) {
-		case '+':
-			temp = (int)( (double)temp * STEP_MULTIPLIER);
-			break;
-		case '-':
-			temp = (int)( (double)temp / STEP_MULTIPLIER);
-			break;
-		default:
-			break;
-		}
+		parse_input(input);
 	}
 
 	if ((pfd[0].revents & POLLIN) == 0) {
