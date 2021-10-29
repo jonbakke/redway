@@ -19,9 +19,56 @@
  * on SIGUSR2, the current temperature is divided by this value. */
 #define STEP_MULTIPLIER 1.06
 
+struct context;
+struct output;
+static const struct zwlr_gamma_control_v1_listener gamma_control_listener;
+static const struct wl_registry_listener registry_listener;
+static struct zwlr_gamma_control_manager_v1 *gamma_control_manager;
+static int change_signal_fds[2];
+static volatile int temp;
+static double gamma_mod;
+
+char* get_fifo_name(void);
+static int illuminant_d(double *x, double *y);
+static int planckian_locus(double *x, double *y);
+static double srgb_gamma(double value);
+static double clamp(double value);
+static void xyz_to_srgb(
+	double x, double y, double z,
+	double *r, double *g, double *b);
+static void srgb_normalize(double *r, double *g, double *b);
+void calc_whitepoint(double *rw, double *gw, double *bw);
+static int create_anonymous_file(off_t size);
+static int create_gamma_table(uint32_t ramp_size, uint16_t **table);
+static void gamma_control_handle_gamma_size(
+	void *data,
+	struct zwlr_gamma_control_v1 *gamma_control,
+	uint32_t ramp_size);
+static void gamma_control_handle_failed(
+	void *data,
+	struct zwlr_gamma_control_v1 *gamma_control);
+static void setup_output(struct output *output);
+static void registry_handle_global(
+	void *data,
+	struct wl_registry *registry,
+	uint32_t name,
+	const char *interface,
+	uint32_t version);
+static void registry_handle_global_remove(
+	void *data,
+	struct wl_registry *registry,
+	uint32_t name);
+static void fill_gamma_table(
+	uint16_t *table,
+	uint32_t ramp_size,
+	double rw, double gw, double bw);
+static void set_temperature(struct wl_list *outputs);
+static int display_dispatch(struct wl_display *display, int timeout);
+static int wlrun(void);
 void temp_increase(int ignored);
 void temp_decrease(int ignored);
 void calc_whitepoint(double *rw, double *gw, double *bw);
+int main(int argc, char *argv[]);
 
 struct context {
 	bool new_output;
@@ -45,10 +92,49 @@ static const struct zwlr_gamma_control_v1_listener gamma_control_listener = {
 	.gamma_size = gamma_control_handle_gamma_size,
 	.failed = gamma_control_handle_failed,
 };
+
+static const struct wl_registry_listener registry_listener = {
+	.global = registry_handle_global,
+	.global_remove = registry_handle_global_remove,
+};
+
 static struct zwlr_gamma_control_manager_v1 *gamma_control_manager = NULL;
-static int change_signal_fds[2];
-static volatile int temp;
-static double gamma_mod;
+
+static const char usage[] = "usage: %s <temperature>\n";
+
+/* Get filename for server FIFO;
+ * first of XDG_RUNTIME_DIR, XDG_STATE_HOME, or HOME/.local/state,
+ * in subdirectory redway, with FIFO named io;
+ * FIFO io is not created, tested, or in any way assured. */
+char* get_fifo_name(void) {
+	static char name[FILENAME_MAX + 1] = { 0 };
+	if (name[0])
+		return &name[0];
+
+	char sub_name_chars[] = "/.local/state/redway/io";
+	char *dir_name = NULL;
+	char *sub_name = NULL;
+	int len = 0;
+
+	dir_name = getenv("XDG_RUNTIME_DIR");
+	if (!dir_name || !dir_name[0])
+		dir_name = getenv("XDG_STATE_HOME");
+	if (dir_name && dir_name[0]) {
+		sub_name = strrchr(&sub_name_chars[0], 'r') - 1;
+	} else {
+		dir_name = getenv("HOME");
+		sub_name = &sub_name_chars[0];
+	}
+
+	if (strlen(dir_name) + strlen(sub_name) > FILENAME_MAX)
+		return NULL;
+
+	len = strlen(dir_name);
+	strncpy(&name[0], dir_name, len + 1);
+	strncpy(&name[0] + len, sub_name, strlen(sub_name) + 1);
+
+	return &name[0];
+}
 
 /*
  * Illuminant D, or daylight locus, is is a "standard illuminant" used to
@@ -298,11 +384,6 @@ static void registry_handle_global_remove(void *data,
 	}
 }
 
-static const struct wl_registry_listener registry_listener = {
-	.global = registry_handle_global,
-	.global_remove = registry_handle_global_remove,
-};
-
 static void fill_gamma_table(uint16_t *table, uint32_t ramp_size, double rw,
 		double gw, double bw) {
 	uint16_t *r = table;
@@ -466,9 +547,9 @@ void temp_decrease(int ignored) {
 	write(change_signal_fds[1], "-\0", 2);
 }
 
-static const char usage[] = "usage: %s <temperature>\n";
-
 int main(int argc, char *argv[]) {
+	get_fifo_name();
+	return 0;
 	if (2 <= argc && ('0' > argv[1][0] || '9' < argv[1][0])) {
 		fprintf(stderr, usage, basename(argv[0]));
 		return 0;
