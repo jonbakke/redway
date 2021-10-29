@@ -310,9 +310,9 @@ static void fill_gamma_table(uint16_t *table, uint32_t ramp_size, double rw,
 	uint16_t *b = table + 2 * ramp_size;
 	for (uint32_t i = 0; i < ramp_size; ++i) {
 		double val = (double)i / (ramp_size - 1);
-		r[i] = (uint16_t)(UINT16_MAX * pow(val * rw, 1.0 / gamma_mod));
-		g[i] = (uint16_t)(UINT16_MAX * pow(val * gw, 1.0 / gamma_mod));
-		b[i] = (uint16_t)(UINT16_MAX * pow(val * bw, 1.0 / gamma_mod));
+		r[i] = (uint16_t)(UINT16_MAX * pow(val * rw, gamma_mod));
+		g[i] = (uint16_t)(UINT16_MAX * pow(val * gw, gamma_mod));
+		b[i] = (uint16_t)(UINT16_MAX * pow(val * bw, gamma_mod));
 	}
 }
 
