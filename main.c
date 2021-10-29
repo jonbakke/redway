@@ -135,7 +135,6 @@ void calc_whitepoint(double *rw, double *gw, double *bw) {
 	srgb_normalize(rw, gw, bw);
 }
 
-
 static int create_anonymous_file(off_t size) {
 	char template[] = "/tmp/redway-shared-XXXXXX";
 	int fd = mkstemp(template);
@@ -164,8 +163,14 @@ static int create_gamma_table(uint32_t ramp_size, uint16_t **table) {
 		return -1;
 	}
 
-	void *data =
-		mmap(NULL, table_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	void *data = mmap(
+		NULL,
+		table_size,
+		PROT_READ | PROT_WRITE,
+		MAP_SHARED,
+		fd,
+		0
+	);
 	if (data == MAP_FAILED) {
 		fprintf(stderr, "failed to mmap()\n");
 		close(fd);
@@ -282,7 +287,9 @@ static void registry_handle_global_remove(void *data,
 			);
 			wl_list_remove(&output->link);
 			if (output->gamma_control != NULL)
-				zwlr_gamma_control_v1_destroy(output->gamma_control);
+				zwlr_gamma_control_v1_destroy(
+					output->gamma_control
+				);
 			if (output->table_fd != -1)
 				close(output->table_fd);
 			free(output);
