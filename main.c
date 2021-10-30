@@ -553,9 +553,10 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 		}
 	}
 
+	/* idle loop */
 	pfd[0].events = POLLIN;
 	pfd[1].events = POLLIN;
-	while (poll(pfd, 2, timeout) == -1) {
+	while (!wants_update && poll(pfd, 2, timeout) == -1) {
 		if (errno != EINTR) {
 			wl_display_cancel_read(display);
 			return -1;
@@ -632,12 +633,12 @@ static int wlrun(void) {
 
 void temp_increase(int ignored) {
 	if (ignored) {}
-	write(input_pipe[1], "+\0", 2);
+	parse_input("+");
 }
 
 void temp_decrease(int ignored) {
 	if (ignored) {}
-	write(input_pipe[1], "-\0", 2);
+	parse_input("-");
 }
 
 int main(int argc, char *argv[]) {
