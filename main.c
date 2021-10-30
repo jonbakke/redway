@@ -28,12 +28,14 @@ struct output;
 static const struct zwlr_gamma_control_v1_listener gamma_control_listener;
 static const struct wl_registry_listener registry_listener;
 static struct zwlr_gamma_control_manager_v1 *gamma_control_manager;
-static int change_signal_fds[2];
+static int input_pipe[2];
+static int output_pipe[2];
 static bool wants_update;
+static bool is_client;
 static volatile int temp;
 static double gamma_mod;
 
-char* get_fifo_name(void);
+void open_fifos(void);
 void parse_input(char *input);
 static int illuminant_d(double *x, double *y);
 static int planckian_locus(double *x, double *y);
@@ -106,18 +108,15 @@ static const struct wl_registry_listener registry_listener = {
 
 static struct zwlr_gamma_control_manager_v1 *gamma_control_manager = NULL;
 
-static const char usage[] = "usage: %s <temperature>\n";
-
 /* Get filename for server FIFO;
  * first of XDG_RUNTIME_DIR, XDG_STATE_HOME, or HOME/.local/state,
  * in subdirectory redway, with FIFO named io;
  * the FIFO is created if it does not exist */
-char* get_fifo_name(void) {
-	static char name[FILENAME_MAX + 1] = { 0 };
-	if (name[0])
-		return &name[0];
+void open_fifos(void) {
+	char name[FILENAME_MAX + 1] = { 0 };
 
-	char sub_name_chars[] = "/.local/state/redway/io";
+	/* build directory name */
+	char sub_name_chars[] = "/.local/state/redway";
 	char *dir_name = NULL;
 	char *sub_name = NULL;
 	int len = 0;
@@ -133,19 +132,16 @@ char* get_fifo_name(void) {
 	}
 
 	if (strlen(dir_name) + strlen(sub_name) > FILENAME_MAX)
-		return NULL;
+		exit(-1);
 
 	len = strlen(dir_name);
 	strncpy(&name[0], dir_name, len + 1);
 	strncpy(&name[0] + len, sub_name, strlen(sub_name) + 1);
 
 	/* ensure directory exists */
-	char tree[FILENAME_MAX + 1] = { 0 };
 	char *last_slash = NULL;
+	char tree[FILENAME_MAX + 1] = { 0 };
 	strncpy(tree, name, strlen(name));
-	last_slash = strrchr(tree, '/');
-	/* remove /io */
-	*last_slash = 0;
 	struct stat fifo_stat;
 	/* get parent directory that exists */
 	int count = 0;
@@ -154,6 +150,7 @@ char* get_fifo_name(void) {
 		*last_slash = 0;
 		count++;
 	}
+
 	/* build directory path */
 	for (int i = 0; i < count; ++i) {
 		*last_slash = '/';
@@ -162,12 +159,49 @@ char* get_fifo_name(void) {
 		last_slash = strchr(tree, 0);
 	}
 
-	/* create the FIFO */
+	/* create the FIFOs */
 	umask(0);
+	count = 0;
+	char * const end_ptr = strchr(name, 0);
+	*(end_ptr + count++) = '/';
+	*(end_ptr + count++) = 'i';
+	*(end_ptr + count++) = 'n';
+	*(end_ptr + count++) = 0;
 	mkfifo(name, S_IRUSR | S_IWUSR | S_IWGRP | S_IRGRP);
 	// TODO error handling
 
-	return &name[0];
+	if ((input_pipe[1] = open(name, O_WRONLY | O_NONBLOCK)) == -1) {
+		if (errno == ENXIO) {
+			/* no process has opened the FIFO for reading */
+			is_client = false;
+		} else {
+			fprintf(
+				stderr,
+				"Could not open pipe for unknown reason.\n"
+			);
+			exit(-1);
+		}
+		// TODO error handling
+	} else {
+		is_client = true;
+		return;
+	}
+
+	input_pipe[0] = open(name, O_RDONLY | O_NONBLOCK);
+	// TODO error handling
+
+	count = 0;
+	*(end_ptr + count++) = '/';
+	*(end_ptr + count++) = 'o';
+	*(end_ptr + count++) = 'u';
+	*(end_ptr + count++) = 't';
+	*(end_ptr + count++) = 0;
+	mkfifo(name, S_IRUSR | S_IWUSR | S_IWGRP | S_IRGRP);
+	// TODO error handling
+	*end_ptr = 0;
+
+	output_pipe[1] = open(name, O_WRONLY | O_NONBLOCK);
+	// TODO error handling
 }
 
 void parse_input(char *input) {
@@ -499,9 +533,9 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 	if (wl_display_prepare_read(display) == -1)
 		return wl_display_dispatch_pending(display);
 
-	struct pollfd pfd[2];
+	struct pollfd pfd[3];
 	pfd[0].fd = wl_display_get_fd(display);
-	pfd[1].fd = change_signal_fds[0];
+	pfd[1].fd = input_pipe[0];
 
 	pfd[0].events = POLLOUT;
 	while (wl_display_flush(display) == -1) {
@@ -533,7 +567,7 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 		char input[PIPE_BUF];
 		if (
 			read(
-				change_signal_fds[0],
+				input_pipe[0],
 				&input,
 				sizeof input
 			) == -1 &&
@@ -598,34 +632,31 @@ static int wlrun(void) {
 
 void temp_increase(int ignored) {
 	if (ignored) {}
-	write(change_signal_fds[1], "+\0", 2);
+	write(input_pipe[1], "+\0", 2);
 }
+
 void temp_decrease(int ignored) {
 	if (ignored) {}
-	write(change_signal_fds[1], "-\0", 2);
+	write(input_pipe[1], "-\0", 2);
 }
 
 int main(int argc, char *argv[]) {
-	/* validate input */
-	if (2 <= argc && ('0' > argv[1][0] || '9' < argv[1][0])) {
-		fprintf(stderr, usage, basename(argv[0]));
-		return 0;
-	}
-	if (2 == argc)
-		temp = strtol(argv[1], NULL, 0);
-	else
-		temp = DEFAULT_TEMP;
-
 	/* initializers */
-	wants_update = true;
+	temp = DEFAULT_TEMP;
 	gamma_mod = 1.0;
+	wants_update = true;
 
-	/* make/open FIFO */
-	const char *fifo_name = get_fifo_name();
+	/* determine state */
+	open_fifos();
+	if (is_client) {
+		for (int i = 1; i < argc; ++i)
+			write(input_pipe[1], argv[i], strlen(argv[i]));
+		close(input_pipe[1]);
+		return EXIT_SUCCESS;
+	}
+	for (int i = 1; i < argc; ++i)
+		parse_input(argv[i]);
 
-	/* signal handlers */
-	change_signal_fds[0] = open(fifo_name, O_RDONLY | O_NONBLOCK);
-	change_signal_fds[1] = open(fifo_name, O_WRONLY | O_NONBLOCK);
 	struct sigaction increase = { .sa_handler = temp_increase };
 	sigaction(SIGUSR1, &increase, NULL);
 	struct sigaction decrease = { .sa_handler = temp_decrease };
