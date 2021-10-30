@@ -1,3 +1,16 @@
+/* redway: a manually controlled color management tool for Wayland. */
+
+/* Control variables:
+ * 'temp' is temperature; lower values are redder, higher are bluer;
+ *        default range is 1200 to 20000, approximating degrees Kelvin.
+ * 'tint' is not yet implemented. TODO.
+ * 'gamma_mod' multiplies the gamma value; values > 1.0 increase contrast in
+ *        the highlights, values < 1.0 increase contrast in the shadows.
+ * 'contrast' reduces contrast range by reducing the white point (values < 0)
+ *        or increasing the black point (values > 0).
+ */
+
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libgen.h>
@@ -8,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -19,6 +33,12 @@
 #define MINIMUM_TEMP  1200
 #define MAXIMUM_TEMP 20000
 
+#define MINIMUM_GAMMA  0.33
+#define MAXIMUM_GAMMA  4.00
+
+#define MINIMUM_CONTRAST -80
+#define MAXIMUM_CONTRAST +80
+
 /* On SIGUSR1, the current temperature is multiplied by this value;
  * on SIGUSR2, the current temperature is divided by this value. */
 #define STEP_MULTIPLIER 1.06
@@ -28,12 +48,15 @@ struct output;
 static const struct zwlr_gamma_control_v1_listener gamma_control_listener;
 static const struct wl_registry_listener registry_listener;
 static struct zwlr_gamma_control_manager_v1 *gamma_control_manager;
+static char* fifo_name;
 static int input_pipe[2];
 static int output_pipe[2];
-static bool wants_update;
+static int flag_pipe[2];
+static int wants_update;
 static bool is_client;
-static volatile int temp;
+static int temp;
 static double gamma_mod;
+static int contrast;
 
 void open_fifos(void);
 void parse_input(char *input);
@@ -44,7 +67,7 @@ static double clamp(double value);
 static void xyz_to_srgb(
 	double x, double y, double z,
 	double *r, double *g, double *b);
-static void srgb_normalize(double *r, double *g, double *b);
+static void normalize_values(double *r, double *g, double *b);
 void calc_whitepoint(double *rw, double *gw, double *bw);
 static int create_anonymous_file(off_t size);
 static int create_gamma_table(uint32_t ramp_size, uint16_t **table);
@@ -75,7 +98,6 @@ static int display_dispatch(struct wl_display *display, int timeout);
 static int wlrun(void);
 void temp_increase(int ignored);
 void temp_decrease(int ignored);
-void calc_whitepoint(double *rw, double *gw, double *bw);
 int main(int argc, char *argv[]);
 
 struct context {
@@ -113,7 +135,7 @@ static struct zwlr_gamma_control_manager_v1 *gamma_control_manager = NULL;
  * in subdirectory redway, with FIFO named io;
  * the FIFO is created if it does not exist */
 void open_fifos(void) {
-	char name[FILENAME_MAX + 1] = { 0 };
+	static char name[FILENAME_MAX + 1] = { 0 };
 
 	/* build directory name */
 	char sub_name_chars[] = "/.local/state/redway";
@@ -186,8 +208,12 @@ void open_fifos(void) {
 		is_client = true;
 		return;
 	}
+	fifo_name = &name[0];
 
 	input_pipe[0] = open(name, O_RDONLY | O_NONBLOCK);
+	// TODO error handling
+	// open writable fd to avoid EOF/POLLHUP
+	input_pipe[1] = open(name, O_WRONLY | O_NONBLOCK);
 	// TODO error handling
 
 	count = 0;
@@ -205,27 +231,48 @@ void open_fifos(void) {
 }
 
 void parse_input(char *input) {
+	if (input == NULL || input[0] == 0)
+		return;
 	int offset = 0;
-	const int orig_temp = temp;
-	const double orig_gamma = gamma_mod;
-	switch (input[0]) {
+
+	const int in_temp = temp;
+	const int in_contr = contrast;
+	const double in_gam = gamma_mod;
+
+	/* avoid non-null-terminated strings */
+#define MAX_STR_LEN 4096
+	static char in[MAX_STR_LEN] = { 0 };
+	strncpy(in, input, MAX_STR_LEN);
+	in[strlen(input)] = 0;
+
+	switch (input[offset]) {
 	case '+':
 		temp = (int)( (double)temp * STEP_MULTIPLIER);
 		break;
+
 	case '-':
 		temp = (int)( (double)temp / STEP_MULTIPLIER);
 		break;
+
 	case '0': case '1': case '2': case '3': case '4': /* fall through */
 	case '5': case '6': case '7': case '8': case '9': /* fall through */
 		temp = atoi(input);
 		break;
+
+	case 'c': case 'C': /* fall through */
+		while (isalpha(*(input+offset)) || isblank(*(input+offset)))
+			offset++;
+		contrast = atoi(input + offset);
+		break;
+
 	case 'g': case 'G': /* fall through */
-		while (*(input + offset) < '0' || *(input + offset) > '9')
+		while (isalpha(*(input+offset)) || isblank(*(input+offset)))
 			offset++;
 		gamma_mod = atof(input + offset);
 		break;
+
 	case 't': case 'T': /* fall through */
-		while (*(input + offset) < '0' || *(input + offset) > '9')
+		while (isalpha(*(input+offset)) || isblank(*(input+offset)))
 			offset++;
 		temp = atoi(input + offset);
 		break;
@@ -237,9 +284,24 @@ void parse_input(char *input) {
 		temp = MINIMUM_TEMP;
 	else if (temp > MAXIMUM_TEMP)
 		temp = MAXIMUM_TEMP;
+	if (gamma_mod < MINIMUM_GAMMA)
+		gamma_mod = MINIMUM_GAMMA;
+	else if (gamma_mod > MAXIMUM_GAMMA)
+		gamma_mod = MAXIMUM_GAMMA;
+	if (contrast < MINIMUM_CONTRAST)
+		contrast = MINIMUM_CONTRAST;
+	else if (contrast > MAXIMUM_CONTRAST)
+		contrast = MAXIMUM_CONTRAST;
 
-	if (orig_temp != temp || orig_gamma != gamma_mod)
-		wants_update = true;
+	if (
+		temp != in_temp ||
+		contrast != in_contr ||
+		gamma_mod != in_gam
+	) {
+		wants_update = 1;
+	} else {
+		wants_update = 0;
+	}
 }
 
 /*
@@ -303,8 +365,9 @@ static void xyz_to_srgb(double x, double y, double z, double *r, double *g, doub
 	*b = srgb_gamma(clamp(0.0556434 * x - 0.2040259 * y + 1.0572252 * z));
 }
 
-static void srgb_normalize(double *r, double *g, double *b) {
-	double maxw = fmaxl(*r, fmaxl(*g, *b));
+static void normalize_values(double *r, double *g, double *b) {
+	/* normalize values */
+	const double maxw = fmaxl(*r, fmaxl(*g, *b));
 	*r /= maxw;
 	*g /= maxw;
 	*b /= maxw;
@@ -324,7 +387,7 @@ void calc_whitepoint(double *rw, double *gw, double *bw) {
 	double z = 1.0 - x - y;
 
 	xyz_to_srgb(x, y, z, rw, gw, bw);
-	srgb_normalize(rw, gw, bw);
+	normalize_values(rw, gw, bw);
 }
 
 static int create_anonymous_file(off_t size) {
@@ -495,8 +558,20 @@ static void fill_gamma_table(uint16_t *table, uint32_t ramp_size, double rw,
 	uint16_t *r = table;
 	uint16_t *g = table + ramp_size;
 	uint16_t *b = table + 2 * ramp_size;
+	printf("contrast %d\n", contrast);
 	for (uint32_t i = 0; i < ramp_size; ++i) {
 		double val = (double)i / (ramp_size - 1);
+		if (contrast != 0) {
+			double scale = 100 - abs(contrast);
+			scale /= 100.0;
+			if (contrast < 0) {
+				val *= scale;
+			} else if (contrast > 0) {
+				val *= scale;
+				val += 1.0 - scale;
+			}
+			val = clamp(val);
+		}
 		r[i] = (uint16_t)(UINT16_MAX * pow(val * rw, gamma_mod));
 		g[i] = (uint16_t)(UINT16_MAX * pow(val * gw, gamma_mod));
 		b[i] = (uint16_t)(UINT16_MAX * pow(val * bw, gamma_mod));
@@ -506,6 +581,7 @@ static void fill_gamma_table(uint16_t *table, uint32_t ramp_size, double rw,
 static void set_temperature(struct wl_list *outputs) {
 	double rw, gw, bw;
 	calc_whitepoint(&rw, &gw, &bw);
+
 	fprintf(stderr, "setting temperature to %d K\n", temp);
 
 	struct output *output;
@@ -533,12 +609,21 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 	if (wl_display_prepare_read(display) == -1)
 		return wl_display_dispatch_pending(display);
 
+
 	struct pollfd pfd[3];
 	pfd[0].fd = wl_display_get_fd(display);
 	pfd[1].fd = input_pipe[0];
+	pfd[2].fd = flag_pipe[0];
 
 	pfd[0].events = POLLOUT;
 	while (wl_display_flush(display) == -1) {
+		if (errno == EAGAIN) {
+			/* flush did not complete;
+			 * wait until available and try again */
+			poll(pfd, 1, timeout);
+			continue;
+		}
+
 		if (errno != EAGAIN && errno != EPIPE) {
 			wl_display_cancel_read(display);
 			return -1;
@@ -553,30 +638,69 @@ static int display_dispatch(struct wl_display *display, int timeout) {
 		}
 	}
 
-	/* idle loop */
 	pfd[0].events = POLLIN;
 	pfd[1].events = POLLIN;
-	while (!wants_update && poll(pfd, 2, timeout) == -1) {
+	pfd[2].events = POLLIN;
+	while (poll(pfd, 3, timeout) == -1) {
 		if (errno != EINTR) {
 			wl_display_cancel_read(display);
 			return -1;
 		}
 	}
 
+	static char input[PIPE_BUF] = { 0 };
+	int unread_bytes;
+
 	if (pfd[1].revents & POLLIN) {
-		// Empty signal fd
-		char input[PIPE_BUF];
-		if (
-			read(
-				input_pipe[0],
-				&input,
-				sizeof input
-			) == -1 &&
-			errno != EAGAIN
-		) {
-			return -1;
+		/* read input pipe */
+		for (;;) {
+			ioctl(pfd[1].fd, FIONREAD, &unread_bytes);
+			if (unread_bytes == 0)
+				break;
+			if (
+				read(
+					pfd[1].fd,
+					&input,
+					PIPE_BUF
+				) == -1 &&
+				errno != EAGAIN
+			) {
+				wl_display_cancel_read(display);
+				return 0;
+			}
+			if (input[0] != 0)
+				parse_input(input);
+			unread_bytes = strlen(input);
+			for (int i = 0; i < unread_bytes; ++i)
+				input[i] = 0;
+			unread_bytes = 0;
 		}
-		parse_input(input);
+	}
+
+	if (pfd[2].revents & POLLIN) {
+		/* read flag pipe */
+		for (;;) {
+			ioctl(pfd[2].fd, FIONREAD, &unread_bytes);
+			if (unread_bytes == 0)
+				break;
+			if (
+				read(
+					pfd[2].fd,
+					&input,
+					PIPE_BUF
+				) == -1 &&
+				errno != EAGAIN
+			) {
+				wl_display_cancel_read(display);
+				return 0;
+			}
+			if (input[0] != 0)
+				parse_input(input);
+			unread_bytes = strlen(input);
+			for (int i = 0; i < unread_bytes; ++i)
+				input[i] = 0;
+			unread_bytes = 0;
+		}
 	}
 
 	if ((pfd[0].revents & POLLIN) == 0) {
@@ -624,7 +748,7 @@ static int wlrun(void) {
 	while (display_dispatch(display, -1) != -1) {
 		if (wants_update) {
 			set_temperature(&ctx.outputs);
-			wants_update = false;
+			wants_update = 0;
 		}
 	}
 
@@ -633,19 +757,20 @@ static int wlrun(void) {
 
 void temp_increase(int ignored) {
 	if (ignored) {}
-	parse_input("+");
+	write(flag_pipe[1], "+", 2);
 }
 
 void temp_decrease(int ignored) {
 	if (ignored) {}
-	parse_input("-");
+	write(flag_pipe[1], "-", 2);
 }
 
 int main(int argc, char *argv[]) {
 	/* initializers */
 	temp = DEFAULT_TEMP;
 	gamma_mod = 1.0;
-	wants_update = true;
+	contrast = 0;
+	wants_update = 0;
 
 	/* determine state */
 	open_fifos();
@@ -655,8 +780,11 @@ int main(int argc, char *argv[]) {
 		close(input_pipe[1]);
 		return EXIT_SUCCESS;
 	}
+	pipe(flag_pipe);
+	// TODO err
+
 	for (int i = 1; i < argc; ++i)
-		parse_input(argv[i]);
+		write(flag_pipe[1], argv[i], strlen(argv[i]));
 
 	struct sigaction increase = { .sa_handler = temp_increase };
 	sigaction(SIGUSR1, &increase, NULL);
