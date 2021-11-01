@@ -39,9 +39,12 @@
 #define MINIMUM_CONTRAST -80
 #define MAXIMUM_CONTRAST +80
 
-/* On SIGUSR1, the current temperature is multiplied by this value;
- * on SIGUSR2, the current temperature is divided by this value. */
+/* On increase, the temperature or gamma is multiplied by this value;
+ * on decrease, the temperature or gamma is divided by this value. */
 #define STEP_MULTIPLIER 1.06
+/* On increase, the contrast has this value added;
+ * on decrease, the contrast has this value subtracted. */
+#define CONTRAST_DELTA     5
 
 struct context;
 struct output;
@@ -263,12 +266,26 @@ void parse_input(char *input) {
 		while (isalpha(*(input+offset)) || isblank(*(input+offset)))
 			offset++;
 		contrast = atoi(input + offset);
+		if (contrast == 0 && !isdigit(*(input + offset + 1))) {
+			/* end of string; not a number */
+			if ('+' == *(input + offset))
+				contrast = in_contr + CONTRAST_DELTA;
+			else if ('-' == *(input + offset))
+				contrast = in_contr - CONTRAST_DELTA;
+		}
 		break;
 
 	case 'g': case 'G': /* fall through */
 		while (isalpha(*(input+offset)) || isblank(*(input+offset)))
 			offset++;
 		gamma_mod = atof(input + offset);
+		if (gamma_mod == 0 && !isdigit(*(input + offset + 1))) {
+			/* end of string; not a number */
+			if ('+' == *(input + offset))
+				gamma_mod = in_gam * STEP_MULTIPLIER;
+			else if ('-' == *(input + offset))
+				gamma_mod = in_gam / STEP_MULTIPLIER;
+		}
 		break;
 
 	case 't': case 'T': /* fall through */
@@ -558,7 +575,6 @@ static void fill_gamma_table(uint16_t *table, uint32_t ramp_size, double rw,
 	uint16_t *r = table;
 	uint16_t *g = table + ramp_size;
 	uint16_t *b = table + 2 * ramp_size;
-	printf("contrast %d\n", contrast);
 	for (uint32_t i = 0; i < ramp_size; ++i) {
 		double val = (double)i / (ramp_size - 1);
 		if (contrast != 0) {
@@ -582,7 +598,13 @@ static void set_temperature(struct wl_list *outputs) {
 	double rw, gw, bw;
 	calc_whitepoint(&rw, &gw, &bw);
 
-	fprintf(stderr, "setting temperature to %d K\n", temp);
+	fprintf(
+		stdout,
+		"temperature: %d; contrast: %d; gamma: %f\n",
+		temp,
+		contrast,
+		gamma_mod
+	);
 
 	struct output *output;
 	wl_list_for_each(output, outputs, link) {
