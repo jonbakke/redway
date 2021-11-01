@@ -53,7 +53,7 @@ High contrast is not always desirable. Strong contrasts -- bright whites, deep b
 
 However, if you will be looking at something for longer than that, such as looking at computer displays for most of the day, high contrast causes strain. Specifically: bright views excite your optical sensors, which can grow tired from the exertion. To reduce the level of stimulation, your retina reduces in size to block out part of the light. This also decreases the brightness of the dark parts of your view, which makes shadows more difficult to distinguish, which also causes strain.
 
-The ideal contrast range for long-term viewing is, therefore, one where whites are dim enough to look at directly while the blacks remain easy to distinguish. This is why some people prefer low-contrast color themes, such as (Solarized)[https://en.wikipedia.org/wiki/Solarized].
+The ideal contrast range for long-term viewing is, therefore, one where whites are dim enough to look at directly while the blacks remain easy to distinguish. This is why some people prefer low-contrast color themes, such as [Solarized](https://en.wikipedia.org/wiki/Solarized).
 
 An often-overlooked problem is that "contrast range" applies to a person's entire field of view, not just the portion of it to which they are paying attention. If you have a bright window behind a dark monitor, or a bright monitor in a dark room, your eyes will eventually grow tired. The effect is slight and may only be noticed as a growing aversion to maintaining the same field of view.
 
