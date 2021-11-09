@@ -41,7 +41,7 @@
 
 /* On increase, the temperature or gamma is multiplied by this value;
  * on decrease, the temperature or gamma is divided by this value. */
-#define STEP_MULTIPLIER 1.06
+#define STEP_MULTIPLIER 1.03
 /* On increase, the contrast has this value added;
  * on decrease, the contrast has this value subtracted. */
 #define CONTRAST_DELTA     5
